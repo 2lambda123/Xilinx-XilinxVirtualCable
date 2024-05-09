@@ -140,6 +140,48 @@ static void edpc(
     }
 }
 
+static void test_dpc(xvc_dpc_t *xvc_dpc) {
+    uint32_t packet_buf[] = {
+        0x00000001,
+        0x99F8B879
+    };
+    uint32_t *ebuf = NULL;
+    size_t ecount = 0;
+    int ret;
+    int count = 100000;
+    hsdp_dma *hsdp = xvc_dpc->hsdp;
+    
+    if (!hsdp) {
+        setup_dma_region(xvc_dpc->dma.addr, xvc_dpc->dma.size);
+        setup_buffer_region(xvc_dpc->buf.addr, xvc_dpc->buf.size);
+
+        hsdp = (hsdp_dma *) hsdp_open();
+    }
+
+    ret = hsdp_send_packet(hsdp, (uint32_t *) packet_buf, sizeof(packet_buf)/sizeof(*packet_buf));
+    if (ret != 0) {
+        fprintf(stdout, "Failed to send enum test packet\n");
+        hsdp_dump_dma(hsdp);
+        return;
+    }
+
+    do {
+        hsdp_receive_fast_packet(hsdp, &ebuf, &ecount, NULL);
+        if (ecount > 0) {
+            fprintf(stdout, "Received enum packet\n");
+            goto cleanup;
+        }
+        count--;
+    } while (count > 0 && ret == 0);
+    fprintf(stdout, "Failed to receive enum packet\n");
+    hsdp_dump_dma(hsdp);
+
+cleanup:
+    if (!xvc_dpc->hsdp) {
+        hsdp_close((uint64_t) hsdp);
+    }
+}
+
 static void display_banner() {
     fprintf(stdout, "\nDescription:\n");
     fprintf(stdout, "Xilinx xvc_dpc v%s\n", XVCDPC_VERSION);
@@ -177,9 +219,9 @@ int main(int argc, char **argv)
     int i = 1;
     int quiet = 0;
     int verbose = 0;
+    int test = 0;
 
-    xvc_dpc.dma.size = 0;
-    xvc_dpc.buf.size = 0;
+    memset(&xvc_dpc, 0, sizeof(xvc_dpc));
 
     while (i < argc && argv[i][0] == '-') {
         if (strcmp(argv[i], "-s") == 0) {
@@ -226,6 +268,8 @@ int main(int argc, char **argv)
               return ERROR_INVALID_ARGUMENT;
             }
             log_mode = LOG_MODE_QUIET;
+        } else if (strcmp(argv[i], "--test") == 0) {
+            test = 1;
         } else if (strcmp(argv[i], "--help") == 0 ) {
             display_help();
             return ERROR_INVALID_ARGUMENT;
@@ -244,5 +288,10 @@ int main(int argc, char **argv)
       fprintf(stdout, "\nINFO: xvc_dpc application started\n");
       fprintf(stdout, "INFO: Use Ctrl-C to exit xvc_dpc application\n\n");
     }
+
+    if (test) {
+        test_dpc(&xvc_dpc);
+    }
+
     return xvcserver_start(url, &xvc_dpc, &handlers, log_mode);
 }

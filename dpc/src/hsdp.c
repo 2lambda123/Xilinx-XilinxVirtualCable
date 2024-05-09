@@ -98,7 +98,7 @@ static unsigned msb = 0;
 
 #define dsb(scope)    asm volatile("dsb " #scope : : : "memory")
 
-//#define VERBOSE 1
+#define VERBOSE 1
 
 static int set_last_error(hsdp_dma *hsdp, char *error) {
     printf("ERROR: Last error - %s\n", error);
@@ -190,7 +190,7 @@ int hsdp_poll_fast_packet(hsdp_dma *hsdp, uint32_t **buf, size_t *word_count, hs
 
 #ifdef VERBOSE
         packet_offset = REG_EGRESS_DESC64(ie, REG_DESC_BUFF) - AXI_EGRESS_PACKET(0);
-        printf("DPC response packet %d (%u) offset 0x%08X, mem %p, pkt %p:\n", ie, (unsigned) size / 4, packet_offset, EGRESS_PACKET(0) + packet_offset, pkt);
+        printf("DPC response packet %d (%u) offset 0x%08lX, mem %p, pkt %p:\n", ie, (unsigned) size / 4, (unsigned long) packet_offset, EGRESS_PACKET(0) + packet_offset, pkt);
         for (i = 0; i < size / 4; ++i) {
             printf("\t0x%08X\n", ((uint32_t *) (EGRESS_PACKET(0) + packet_offset))[i]);
         }
@@ -372,7 +372,7 @@ int hsdp_send_fast_packet(hsdp_dma *hsdp, int buf_index, size_t word_count) {
     REG_INGRESS_DESC64(ii, REG_DESC_BUFF) = AXI_INGRESS_PACKET(buf_index);
 
 #ifdef VERBOSE
-    printf("DPC packet %d (%u) offset 0x%08X:\n", ii, (unsigned) size / 4, HSDP_AXI_ADDR(hsdp->ipkts, buf_index));
+    printf("DPC packet %d (%u) offset 0x%08lX:\n", ii, (unsigned) size / 4, (unsigned long) HSDP_AXI_ADDR(hsdp->ipkts, buf_index));
     for (i = 0; i < size / 4; ++i) {
         printf("\t0x%08X\n", ((uint32_t *) (INGRESS_PACKET(buf_index)))[i]);
     }
@@ -395,6 +395,7 @@ void hsdp_setup_dma(hsdp_dma *hsdp) {
     unsigned status = 0;
     size_t count = 0;
     size_t i = 0;
+    int max_polls;
 
     hsdp->ipkts.last = -1;
     hsdp->epkts.last = -1;
@@ -403,8 +404,17 @@ void hsdp_setup_dma(hsdp_dma *hsdp) {
 
     // reset
     REG_DMA_INGRESS_CNTL = 0x00010004;
-    while ((status = REG_DMA_INGRESS_CNTL) & 4) {
+    REG_DMA_EGRESS_CNTL  = 0x00010004;
+    max_polls = 10000;
+    while ((status = REG_DMA_INGRESS_CNTL) & 4 
+        && (REG_DMA_EGRESS_CNTL & 4)
+        && max_polls > 0) {
+        --max_polls;
         //printf("Resetting DMA status 0x%08X\n", status);
+    }
+    if (max_polls <= 0) {
+        printf("Failed to reset dma\n");
+        return;
     }
 
 #ifdef VERBOSE
@@ -446,13 +456,18 @@ void hsdp_setup_dma(hsdp_dma *hsdp) {
 
     REG_DMA_EGRESS_CNTL = 0x00010003;
 
-    while ((status = REG_DMA_EGRESS_STS) & 1) {
-        printf("Egress starting 0x%08X\n", status);
+    max_polls = 10000;
+    while ((status = REG_DMA_EGRESS_STS) & 1 && max_polls > 0) {
+        --max_polls;
+    }
+    if (max_polls <= 0) {
+        printf("Failed to setup egress\n");
+        return;
     }
     REG_DMA_EGRESS_TAIL64 = AXI_EGRESS_DESC(count - 1);
 
 #ifdef VERBOSE
-    printf("%s: REG_DMA_EGRESS_CUR64 = 0x08X", __func__, REG_DMA_EGRESS_CUR64);
+    printf("%s: REG_DMA_EGRESS_CUR64 = 0x%08lX", __func__, (unsigned long) REG_DMA_EGRESS_CUR64);
     hsdp_dump_dma(hsdp);
 #endif
 }
